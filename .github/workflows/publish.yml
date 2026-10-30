@@ -1,0 +1,93 @@
+name: Publish image
+
+# Builds the image and pushes it to ghcr:
+#
+#   :latest          - newest build from the default branch
+#   :<CP_VERSION>    - pinned to the Crystal Palace release in the Dockerfile
+#   :sha-<short>     - immutable per commit
+#
+# A git tag cpl-<CP_VERSION> is also created so each Crystal Palace release is bookmarked in the repo history
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read the pinned Crystal Palace version
+        id: cp
+        run: |
+          set -euo pipefail
+          version=$(grep -oP '^ARG CP_VERSION=\K\S+' Dockerfile | head -n1)
+          if [ -z "${version}" ]; then
+            echo "Could not read ARG CP_VERSION from the Dockerfile" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Crystal Palace version: ${version}"
+
+      - name: Compute image name and commit short SHA
+        id: image
+        run: |
+          set -euo pipefail
+          echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.cp.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:sha-${{ steps.image.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create a git tag for this Crystal Palace release
+        env:
+          VERSION: ${{ steps.cp.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="cpl-${VERSION}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "git tag ${tag} already exists, nothing to do"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "Crystal Palace ${VERSION}"
+          git push origin "${tag}"

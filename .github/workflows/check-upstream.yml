@@ -1,0 +1,105 @@
+name: Check Crystal Palace upstream
+
+# Weekly check for a new Crystal Palace source release
+
+on:
+  schedule:
+    # Every Monday at 06:17 UTC
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: check-upstream
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve the latest Crystal Palace version
+        id: upstream
+        run: |
+          set -euo pipefail
+
+          latest_url=$(curl -sSIL --retry 3 --retry-delay 2 -o /dev/null \
+            -w '%{url_effective}' \
+            "https://tradecraftgarden.org/download/cpsrc-latest.tgz")
+          latest=$(basename "${latest_url}" | sed -E 's/^cpsrc([0-9]{8})\.tgz$/\1/')
+
+          if ! [[ "${latest}" =~ ^[0-9]{8}$ ]]; then
+            echo "Could not determine the latest version from '${latest_url}'" >&2
+            exit 1
+          fi
+
+          current=$(grep -oP '^ARG CP_VERSION=\K\S+' Dockerfile | head -n1)
+
+          echo "latest=${latest}"   >> "$GITHUB_OUTPUT"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+
+          if [ "${latest}" = "${current}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date (${current})."
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "Update available: ${current} -> ${latest}"
+          fi
+
+      - name: Download the new release and compute its checksum
+        if: steps.upstream.outputs.changed == 'true'
+        id: hash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/cpsrc.tgz \
+            "https://tradecraftgarden.org/download/cpsrc${{ steps.upstream.outputs.latest }}.tgz"
+          sha=$(sha256sum /tmp/cpsrc.tgz | awk '{print $1}')
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "sha256: ${sha}"
+
+      - name: Bump the pinned version
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.upstream.outputs.current }}
+          LATEST: ${{ steps.upstream.outputs.latest }}
+          SHA: ${{ steps.hash.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          sed -i -E "s|^ARG CP_VERSION=.*|ARG CP_VERSION=${LATEST}|" Dockerfile
+          sed -i -E "s|^ARG CP_SHA256=.*|ARG CP_SHA256=${SHA}|" Dockerfile
+
+          # Keep the pinned version in the README examples in sync.
+          sed -i "s/cpl-sidecar:${CURRENT}/cpl-sidecar:${LATEST}/g" README.md
+
+          git --no-pager diff --stat
+
+      - name: Open a pull request
+        if: steps.upstream.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/crystalpalace-${{ steps.upstream.outputs.latest }}
+          delete-branch: true
+          commit-message: |
+            Bump Crystal Palace to ${{ steps.upstream.outputs.latest }}
+
+            CP_SHA256=${{ steps.hash.outputs.sha }}
+          title: "Bump Crystal Palace to ${{ steps.upstream.outputs.latest }}"
+          body: |
+            Crystal Palace released **${{ steps.upstream.outputs.latest }}**.
+
+            | | |
+            | --- | --- |
+            | Previous | `${{ steps.upstream.outputs.current }}` |
+            | New | `${{ steps.upstream.outputs.latest }}` |
+            | Source | https://tradecraftgarden.org/download/cpsrc${{ steps.upstream.outputs.latest }}.tgz |
+            | SHA-256 | `${{ steps.hash.outputs.sha }}` |
+
+            Review the upstream [release notes](https://tradecraftgarden.org/releasenotes.txt)
+            and merge to publish a new image.
