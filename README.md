@@ -125,7 +125,7 @@ In case you want to avoid port publishing:
 
 ```bash
 docker run -d --network host -e CPL_BIND=127.0.0.1 --name cpl \
-  -v "$PWD/work:/work" cpl-sidecar:20260921
+  -v "$PWD/work:/work" cpl-sidecar:20261029
 ```
 
 With `CPL_BIND=127.0.0.1`, socat listens only on the host loopback, so the sidecar is not exposed

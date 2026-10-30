@@ -5,7 +5,7 @@
 # Upstream: https://tradecraftgarden.org/crystalpalace.html
 
 ARG JAVA_VERSION=11
-ARG CP_VERSION=20260921
+ARG CP_VERSION=20261029
 
 # ---------------------------------------------------------------------------
 # Build stage
@@ -16,7 +16,7 @@ FROM eclipse-temurin:${JAVA_VERSION}-jdk-jammy AS build
 # Set CP_SHA256 to an empty string to skip verification. 
 # CP_SRC_URL can override the download location
 ARG CP_VERSION
-ARG CP_SHA256=1d1544d81e3c4e877c908a3db67d334aba2c228b724d9b890972f31c8c36b6d6
+ARG CP_SHA256=67e7f8754a1f60549b25c3de8079aa3b2e946d179c111af6418f74dc213cd694
 ARG CP_SRC_URL=
 
 # hadolint ignore=DL3008
